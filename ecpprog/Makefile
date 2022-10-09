@@ -50,7 +50,7 @@ endif
 
 all: $(PROGRAM_PREFIX)ecpprog$(EXE)
 
-$(PROGRAM_PREFIX)ecpprog$(EXE): ecpprog.o mpsse.o jtag_tap.o
+$(PROGRAM_PREFIX)ecpprog$(EXE): ecpprog.o mpsse.o jtag_tap.o dump_hex.o u2p_stuff.o
 	$(CC) -o $@ $(LDFLAGS) $^ $(LDLIBS)
 
 install: all

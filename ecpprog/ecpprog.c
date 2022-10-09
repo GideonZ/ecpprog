@@ -44,6 +44,7 @@
 
 #include "jtag.h"
 #include "lattice_cmds.h"
+#include "u2p_stuff.h"
 
 static bool verbose = false;
 
@@ -761,6 +762,7 @@ static void help(const char *progname)
 	fprintf(stderr, "  -c                    do not write flash, only verify (`check')\n");
 	fprintf(stderr, "  -S                    perform SRAM programming\n");
 	fprintf(stderr, "  -t                    just read the flash ID sequence\n");
+	fprintf(stderr, "  -W                    write byte to custom JTAG logic for test purposes\n");
 	fprintf(stderr, "\n");
 	fprintf(stderr, "Erase mode (only meaningful in default mode):\n");
 	fprintf(stderr, "  [default]             erase aligned chunks of 64kB in write mode\n");
@@ -802,7 +804,9 @@ int main(int argc, char **argv)
 	int erase_size = 0;
 	int rw_offset = 0;
 	int clkdiv = 1;
+	int writebyte = 0;
 
+	bool user_mode = false;
 	bool reinitialize = false;
 	bool read_mode = false;
 	bool check_mode = false;
@@ -830,8 +834,12 @@ int main(int argc, char **argv)
 	/* Decode command line parameters */
 	int opt;
 	char *endptr;
-	while ((opt = getopt_long(argc, argv, "d:i:I:rR:e:o:k:scbnStvpX", long_options, NULL)) != -1) {
+	while ((opt = getopt_long(argc, argv, "W:d:i:I:rR:e:o:k:scbnStvpX", long_options, NULL)) != -1) {
 		switch (opt) {
+		case 'W': /* write to user JTAG */
+			writebyte = strtol(optarg, NULL, 0);
+			user_mode = true;
+			break;
 		case 'd': /* device string */
 			devstr = optarg;
 			break;
@@ -1002,7 +1010,7 @@ int main(int argc, char **argv)
 		return EXIT_FAILURE;
 	} else if (bulk_erase || disable_protect) {
 		filename = "/dev/null";
-	} else if (!test_mode && !erase_mode && !disable_protect) {
+	} else if (!test_mode && !erase_mode && !disable_protect & !user_mode) {
 		fprintf(stderr, "%s: missing argument\n", my_name);
 		fprintf(stderr, "Try `%s --help' for more information.\n", argv[0]);
 		return EXIT_FAILURE;
@@ -1014,7 +1022,7 @@ int main(int argc, char **argv)
 	FILE *f = NULL;
 	long file_size = -1;
 
-	if (test_mode) {
+	if (test_mode || user_mode) {
 		/* nop */;
 	} else if (erase_mode) {
 		file_size = erase_size;
@@ -1098,7 +1106,11 @@ int main(int argc, char **argv)
 	read_idcode();
 	read_status_register();
 
-	if (test_mode)
+	if (user_mode)
+	{
+		user_set_io(writebyte);
+	}
+	else if (test_mode)
 	{
 		/* Reset ECP5 to release SPI interface */
 		ecp_jtag_cmd8(ISC_ENABLE,0);
