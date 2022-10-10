@@ -834,7 +834,7 @@ int main(int argc, char **argv)
 	/* Decode command line parameters */
 	int opt;
 	char *endptr;
-	while ((opt = getopt_long(argc, argv, "W:d:i:I:rR:e:o:k:scbnStvpX", long_options, NULL)) != -1) {
+	while ((opt = getopt_long(argc, argv, "W:d:i:I:rR:e:o:k:scabnStvpX", long_options, NULL)) != -1) {
 		switch (opt) {
 		case 'W': /* write to user JTAG */
 			writebyte = strtol(optarg, NULL, 0);
