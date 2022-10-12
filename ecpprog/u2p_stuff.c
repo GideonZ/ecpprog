@@ -50,6 +50,7 @@
 
 #include "jtag.h"
 #include "dump_hex.h"
+#include "u2p_stuff.h"
 
 #define	LSC_USER1 0x32
 #define	LSC_USER2 0x38
@@ -116,6 +117,28 @@ static int read_fifo(uint8_t *data, int bytes)
 		bytes_read += available;
 	}
 	return bytes_read;
+}
+
+int user_read_console(char *data, int bytes)
+{
+	uint8_t available = 0;
+	set_user_ir(10);
+	rw_user_data(NULL, 0); // set USER2 as IR, and go do SHIFT_DR state
+	available = 0; // to make sure TDI = 0
+	jtag_tap_shift(&available, &available, 8, false);
+	printf("Avail: %d\n", available);
+	bytes--; // space for 0 char
+	if (available > bytes) {
+		available = (uint8_t)bytes;
+	}
+	if (available) {
+		memset(data, 0, available);
+		data[available-1] = 0xF0; // no read on last 
+		jtag_tap_shift((uint8_t *)data, (uint8_t *)data, 8*available, true);
+		dump_hex_relative(data, available);
+	}
+	data[available] = 0; // string terminating null
+	return (int)available;
 }
 
 void user_read_memory(uint32_t address, int words, uint8_t *dest)
@@ -196,23 +219,38 @@ uint32_t user_read_id()
     return code;
 }
 
-void user_test_jtag()
+uint32_t user_read_signals()
 {
-    if (user_read_id() != 0xdead1541) {
-        printf("User ID fail. Stopped.\n");
-        return;
-    }
+	uint32_t code = 0;
+	set_user_ir(1);
+	rw_user_data((uint8_t*)&code, 32);
+	printf("Data read from USER JTAG: %08x\n", code);
+    return code;
+}
 
-	FILE *f = fopen("u2p_ecp5.lpf", "rb");
+int user_upload(const char *filename, const uint32_t dest_addr)
+{
+	FILE *f = fopen(filename, "rb");
     if (!f) {
-        printf("Cannot open test file. Stopped.\n");
-        return;
+        printf("Cannot open file '%s'..\n", filename);
+		return -1;
     }
-	static uint32_t filedata[32768];
-	int words = fread(filedata, 4, 32768, f);
+	fseek(f, 0, SEEK_END);
+	long int size = ftell(f);
+	size = (size + 3) & ~3;
+	uint8_t *filedata = malloc(size);
+	if (!filedata) {
+		printf("Out of memory.\n");
+		return -2;
+	}
+	fseek(f, 0, SEEK_SET);
+	int read_result = fread(filedata, 1, size, f);
 	fclose(f);
-	user_write_memory(0, words, filedata);
 
+	user_write_memory(dest_addr, size >> 2, (uint32_t *)filedata);
+	free(filedata);
+
+/*
 	memset(filedata, 0x55, 4*words);
 	user_read_memory(0x00000, words, (uint8_t *)filedata);
 	for (int i=0;i<75;i++) {
@@ -222,26 +260,66 @@ void user_test_jtag()
 	f = fopen("readback", "wb");
 	fwrite(filedata, 4, words, f);
 	fclose(f);
+*/
+	return 0;
+}
 
+void user_run_appl(uint32_t runaddr)
+{
+	uint32_t magic[2];
+	magic[0] = runaddr;
+	magic[1] = 0x1571babe;
+
+	// Set CPU to reset
+	user_set_io(0x80);
+
+	// write magic values
+	user_write_memory(0xF8, 2, magic);
+
+	// Un-reset CPU
+	user_set_io(0x00);
+}
+
+void user_test_jtag()
+{
+    if (user_read_id() != 0xdead1541) {
+        printf("User ID fail. Stopped.\n");
+        return;
+    }
+
+	user_read_signals();
+
+	static char uart_data[256];
 	static uint8_t regs[32];
+
 	user_read_io_registers(0, 32, regs);
 	dump_hex_relative(regs, 32);
 
-	const char *msg = "Haha!";
+	const char *msg = "Haha!\n";
 	for(int i=0; i<strlen(msg); i++) {
 		user_write_io_registers(0x10, 1, (uint8_t *)&msg[i]);
 	}
+
+	int num_chars = user_read_console(uart_data, 256);
+	printf("UART Data (%d bytes):\n%s\n", num_chars, uart_data);
+
+	user_upload("hello_world.bin", 0x30000);
+	user_run_appl(0x30000);
+	usleep(100000);
+	num_chars = user_read_console(uart_data, 256);
+	printf("UART Data (%d bytes):\n%s\n", num_chars, uart_data);
 }
 
 void user_set_io(int value)
 {
-	uint8_t data = (uint8_t)value;
-	printf("Setting User Register to %02x\n", data);
-	set_user_ir(2);
-	rw_user_data(&data, 8);
-	printf("Old data: %02x\n", data);
-
     if (value == -1) {
         user_test_jtag();
-    }
+    } else {
+		uint8_t data = (uint8_t)value;
+		printf("Setting User Register to %02x\n", data);
+		set_user_ir(2);
+		rw_user_data(&data, 8);
+		printf("Old data: %02x\n", data);
+	}
 }
+
