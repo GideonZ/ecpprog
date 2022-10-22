@@ -8,7 +8,6 @@ void user_read_io_registers(uint32_t address, int count, uint8_t *data);
 void user_write_io_registers(uint32_t address, int count, uint8_t *data);
 void user_test_jtag();
 void user_set_io(int value);
-void user_run_appl(uint32_t runaddr);
 int user_read_console(char *data, int bytes);
 int user_upload(const char *filename, const uint32_t dest_addr);
 void user_run_appl(uint32_t runaddr);

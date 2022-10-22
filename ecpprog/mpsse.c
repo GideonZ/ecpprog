@@ -224,12 +224,16 @@ void mpsse_init(int ifnum, const char *devstr, int clkdiv)
 	mpsse_send_byte(MC_SETB_LOW);
 	mpsse_send_byte(0x08); /* Value */
 	mpsse_send_byte(0x0B); /* Direction */
+
+	mpsse_send_byte(MC_SETB_HIGH);
+	mpsse_send_byte(0xFF); /* Value */
+	mpsse_send_byte(0x00); /* Direction */
 }
 
 void mpsse_close(void)
 {
 	ftdi_set_latency_timer(&mpsse_ftdic, mpsse_ftdi_latency);
-	ftdi_disable_bitbang(&mpsse_ftdic);
+	//ftdi_disable_bitbang(&mpsse_ftdic);
 	ftdi_usb_close(&mpsse_ftdic);
 	ftdi_deinit(&mpsse_ftdic);
 }

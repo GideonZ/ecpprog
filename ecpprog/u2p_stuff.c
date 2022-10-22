@@ -126,7 +126,7 @@ int user_read_console(char *data, int bytes)
 	rw_user_data(NULL, 0); // set USER2 as IR, and go do SHIFT_DR state
 	available = 0; // to make sure TDI = 0
 	jtag_tap_shift(&available, &available, 8, false);
-	printf("Avail: %d\n", available);
+	//printf("Avail: %d\n", available);
 	bytes--; // space for 0 char
 	if (available > bytes) {
 		available = (uint8_t)bytes;
@@ -135,7 +135,7 @@ int user_read_console(char *data, int bytes)
 		memset(data, 0, available);
 		data[available-1] = 0xF0; // no read on last 
 		jtag_tap_shift((uint8_t *)data, (uint8_t *)data, 8*available, true);
-		dump_hex_relative(data, available);
+		//dump_hex_relative(data, available);
 	}
 	data[available] = 0; // string terminating null
 	return (int)available;
@@ -215,7 +215,7 @@ uint32_t user_read_id()
 	uint32_t code = 0;
 	set_user_ir(0);
 	rw_user_data((uint8_t*)&code, 32);
-	printf("Data read from USER JTAG: %08x\n", code);
+	printf("Data read from USER ID-Code: %08x\n", code);
     return code;
 }
 
@@ -224,7 +224,7 @@ uint32_t user_read_signals()
 	uint32_t code = 0;
 	set_user_ir(1);
 	rw_user_data((uint8_t*)&code, 32);
-	printf("Data read from USER JTAG: %08x\n", code);
+	printf("Data read from USER Signals: %08x\n", code);
     return code;
 }
 
@@ -271,13 +271,13 @@ void user_run_appl(uint32_t runaddr)
 	magic[1] = 0x1571babe;
 
 	// Set CPU to reset
-	user_set_io(0x80);
+	user_set_io(0xB0);
 
 	// write magic values
 	user_write_memory(0xF8, 2, magic);
 
 	// Un-reset CPU
-	user_set_io(0x00);
+	user_set_io(0x30);
 }
 
 void user_test_jtag()
@@ -300,14 +300,20 @@ void user_test_jtag()
 		user_write_io_registers(0x10, 1, (uint8_t *)&msg[i]);
 	}
 
+	user_read_memory(0xFC, 64, (uint8_t*)uart_data);
+	dump_hex_relative(uart_data, 256);
+
 	int num_chars = user_read_console(uart_data, 256);
 	printf("UART Data (%d bytes):\n%s\n", num_chars, uart_data);
 
-	user_upload("hello_world.bin", 0x30000);
-	user_run_appl(0x30000);
-	usleep(100000);
-	num_chars = user_read_console(uart_data, 256);
-	printf("UART Data (%d bytes):\n%s\n", num_chars, uart_data);
+	user_upload("hello_world.bin", 0x100);
+	user_run_appl(0x100);
+	do {
+		usleep(10000); // 100K = ~55 chars.
+		num_chars = user_read_console(uart_data, 256);
+		printf("%s", uart_data);
+		//printf("UART Data (%d bytes):\n%s\n", num_chars, uart_data);
+	} while(num_chars);
 }
 
 void user_set_io(int value)

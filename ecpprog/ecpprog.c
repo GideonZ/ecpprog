@@ -45,6 +45,7 @@
 #include "jtag.h"
 #include "lattice_cmds.h"
 #include "u2p_stuff.h"
+#include "daemon.h"
 
 static bool verbose = false;
 
@@ -721,6 +722,190 @@ void ecp_jtag_cmd8(uint8_t cmd, uint8_t param){
 	jtag_wait_time(32);	
 }
 
+void ecp_prog_sram(FILE *f, bool verbose)
+{
+	// ---------------------------------------------------------
+	// Reset
+	// ---------------------------------------------------------
+	fprintf(stderr, "reset..\n");
+
+	ecp_jtag_cmd8(ISC_ENABLE, 0);
+	ecp_jtag_cmd8(ISC_ERASE, 0);
+	ecp_jtag_cmd8(LSC_RESET_CRC, 0);
+
+	read_status_register();
+
+	// ---------------------------------------------------------
+	// Program
+	// ---------------------------------------------------------
+	const uint32_t len = 16*1024;
+	static unsigned char buffer[16*1024];
+
+	fprintf(stderr, "programming..\n");
+	ecp_jtag_cmd(LSC_BITSTREAM_BURST);
+	while (1) {
+		int rc = fread(buffer, 1, len, f);
+		if (rc <= 0)
+			break;
+		if (verbose)
+			fprintf(stderr, "sending %d bytes.\n", rc);
+
+		for(int i = 0; i < rc; i++){
+			buffer[i] = bit_reverse(buffer[i]);
+		}
+
+		jtag_go_to_state(STATE_CAPTURE_DR);
+		jtag_tap_shift(buffer, buffer, rc*8, false);
+	}
+
+	ecp_jtag_cmd(ISC_DISABLE);
+	read_status_register();	
+}
+
+int ecp_prog_flash(FILE *f, bool disable_protect, bool dont_erase, bool bulk_erase, bool erase_mode, int erase_block_size, int rw_offset)
+{
+	// This has been done before, but as a lib call,
+	// it is nicer when the file size does not need to be passed as an argument.
+	long file_size;
+
+	if (fseek(f, 0L, SEEK_END) != -1) {
+		file_size = ftell(f);
+		if (file_size == -1) {
+			return EXIT_FAILURE;
+		}
+		if (fseek(f, 0L, SEEK_SET) == -1) {
+			return EXIT_FAILURE;
+		}
+	} else {
+		return EXIT_FAILURE;
+	}
+
+	if (disable_protect)
+	{
+		flash_write_enable();
+		flash_disable_protection();
+	}
+	
+	if (!dont_erase)
+	{
+		if (bulk_erase)
+		{
+			flash_write_enable();
+			flash_bulk_erase();
+			flash_wait();
+		}
+		else
+		{
+			fprintf(stderr, "file size: %ld\n", file_size);
+
+			int block_size = erase_block_size << 10;
+			int block_mask = block_size - 1;
+			int begin_addr = rw_offset & ~block_mask;
+			int end_addr = (rw_offset + file_size + block_mask) & ~block_mask;
+
+			for (int addr = begin_addr; addr < end_addr; addr += block_size) {
+				flash_write_enable();
+				switch(erase_block_size) {
+					case 4:
+						flash_4kB_sector_erase(addr);
+						break;
+					case 32:
+						flash_32kB_sector_erase(addr);
+						break;
+					case 64:
+						flash_64kB_sector_erase(addr);
+						break;
+				}
+				if (verbose) {
+					fprintf(stderr, "Status after block erase:\n");
+					flash_read_status();
+				}
+				flash_wait();
+			}
+		}
+	}
+
+	if (!erase_mode)
+	{
+		for (int rc, addr = 0; true; addr += rc) {
+			uint8_t buffer[256];
+
+			/* Show progress */
+			fprintf(stderr, "\r\033[0Kprogramming..  %04u/%04lu", addr, file_size);
+
+			int page_size = 256 - (rw_offset + addr) % 256;
+			rc = fread(buffer, 1, page_size, f);
+			if (rc <= 0)
+				break;
+			flash_write_enable();
+			flash_prog(rw_offset + addr, buffer, rc);
+			flash_wait();
+
+		}
+
+		fprintf(stderr, "\n");
+		/* seek to the beginning for second pass */
+		fseek(f, 0, SEEK_SET);
+	}
+
+	return EXIT_SUCCESS;
+}
+
+void ecp_init_flash_mode()
+{
+	fprintf(stderr, "reset..\n");
+	/* Reset ECP5 to release SPI interface */
+	ecp_jtag_cmd8(ISC_ENABLE, 0);
+	ecp_jtag_cmd8(ISC_ERASE, 0);
+	ecp_jtag_cmd8(ISC_DISABLE, 0);
+
+	/* Put device into SPI bypass mode */
+	enter_spi_background_mode();
+
+	flash_reset();
+
+	flash_read_id();
+}
+
+int ecp_flash_verify(FILE *f, int rw_offset)
+{
+	// This has been done before, but as a lib call,
+	// it is nicer when the file size does not need to be passed as an argument.
+	long file_size;
+
+	if (fseek(f, 0L, SEEK_END) != -1) {
+		file_size = ftell(f);
+		if (file_size == -1) {
+			return EXIT_FAILURE;
+		}
+		if (fseek(f, 0L, SEEK_SET) == -1) {
+			return EXIT_FAILURE;
+		}
+	} else {
+		return EXIT_FAILURE;
+	}
+
+	flash_start_read(rw_offset);
+	for (int addr = 0; addr < file_size; addr += 4096) {
+		uint8_t buffer_flash[4096], buffer_file[4096];
+
+		int rc = fread(buffer_file, 1, 4096, f);
+		if (rc <= 0)
+			break;
+		
+		flash_continue_read(buffer_flash, rc);
+		
+		/* Show progress */
+		fprintf(stderr, "\r\033[0Kverify..       %04u/%04lu", addr + rc, file_size);
+		if (memcmp(buffer_file, buffer_flash, rc)) {
+			fprintf(stderr, "Found difference between flash and file!\n");
+			return EXIT_FAILURE;
+		}
+	}
+	fprintf(stderr, "  VERIFY OK\n");
+	return EXIT_SUCCESS;
+}
+
 // ---------------------------------------------------------
 // iceprog implementation
 // ---------------------------------------------------------
@@ -763,6 +948,7 @@ static void help(const char *progname)
 	fprintf(stderr, "  -S                    perform SRAM programming\n");
 	fprintf(stderr, "  -t                    just read the flash ID sequence\n");
 	fprintf(stderr, "  -W                    write byte to custom JTAG logic for test purposes\n");
+	fprintf(stderr, "  -D <port nr>          run in daemon / server mode\n");
 	fprintf(stderr, "\n");
 	fprintf(stderr, "Erase mode (only meaningful in default mode):\n");
 	fprintf(stderr, "  [default]             erase aligned chunks of 64kB in write mode\n");
@@ -805,7 +991,9 @@ int main(int argc, char **argv)
 	int rw_offset = 0;
 	int clkdiv = 1;
 	int writebyte = 0;
+	int portnr = 0;
 
+	bool daemon_mode = false;
 	bool user_mode = false;
 	bool reinitialize = false;
 	bool read_mode = false;
@@ -817,6 +1005,7 @@ int main(int argc, char **argv)
 	bool test_mode = false;
 	bool disable_protect = false;
 	bool disable_verify = false;
+
 	const char *filename = NULL;
 	const char *devstr = NULL;
 	int ifnum = 0;
@@ -834,11 +1023,15 @@ int main(int argc, char **argv)
 	/* Decode command line parameters */
 	int opt;
 	char *endptr;
-	while ((opt = getopt_long(argc, argv, "W:d:i:I:rR:e:o:k:scabnStvpX", long_options, NULL)) != -1) {
+	while ((opt = getopt_long(argc, argv, "W:D:d:i:I:rR:e:o:k:scabnStvpX", long_options, NULL)) != -1) {
 		switch (opt) {
 		case 'W': /* write to user JTAG */
 			writebyte = strtol(optarg, NULL, 0);
 			user_mode = true;
+			break;
+		case 'D': /* Daemon mode, param: port number */
+			portnr = strtol(optarg, NULL, 0);
+			daemon_mode = true;
 			break;
 		case 'd': /* device string */
 			devstr = optarg;
@@ -962,8 +1155,8 @@ int main(int argc, char **argv)
 
 	/* Make sure that the combination of provided parameters makes sense */
 
-	if (read_mode + erase_mode + check_mode + prog_sram + test_mode > 1) {
-		fprintf(stderr, "%s: options `-r'/`-R', `-e`, `-c', `-S', and `-t' are mutually exclusive\n", my_name);
+	if (read_mode + erase_mode + check_mode + prog_sram + test_mode + daemon_mode > 1) {
+		fprintf(stderr, "%s: options `-r'/`-R', `-e`, `-c', `-S', `-D', and `-t' are mutually exclusive\n", my_name);
 		return EXIT_FAILURE;
 	}
 
@@ -1010,7 +1203,7 @@ int main(int argc, char **argv)
 		return EXIT_FAILURE;
 	} else if (bulk_erase || disable_protect) {
 		filename = "/dev/null";
-	} else if (!test_mode && !erase_mode && !disable_protect & !user_mode) {
+	} else if (!test_mode && !erase_mode && !disable_protect & !user_mode & !daemon_mode) {
 		fprintf(stderr, "%s: missing argument\n", my_name);
 		fprintf(stderr, "Try `%s --help' for more information.\n", argv[0]);
 		return EXIT_FAILURE;
@@ -1022,7 +1215,9 @@ int main(int argc, char **argv)
 	FILE *f = NULL;
 	long file_size = -1;
 
-	if (test_mode || user_mode) {
+	if (test_mode) {
+		/* nop */;
+	} else if (daemon_mode) {
 		/* nop */;
 	} else if (erase_mode) {
 		file_size = erase_size;
@@ -1034,7 +1229,7 @@ int main(int argc, char **argv)
 			return EXIT_FAILURE;
 		}
 		file_size = read_size;
-	} else {
+	} else if (filename) {
 		f = (strcmp(filename, "-") == 0) ? stdin : fopen(filename, "rb");
 		if (f == NULL) {
 			fprintf(stderr, "%s: can't open '%s' for reading: ", my_name, filename);
@@ -1106,7 +1301,11 @@ int main(int argc, char **argv)
 	read_idcode();
 	read_status_register();
 
-	if (user_mode)
+	if (daemon_mode)
+	{
+		start_daemon(portnr);
+	}
+	else if (user_mode && !prog_sram)
 	{
 		user_set_io(writebyte);
 	}
@@ -1129,62 +1328,19 @@ int main(int argc, char **argv)
 	}
 	else if (prog_sram)
 	{
-		// ---------------------------------------------------------
-		// Reset
-		// ---------------------------------------------------------
-		fprintf(stderr, "reset..\n");
+		ecp_prog_sram(f, verbose);
 
-		ecp_jtag_cmd8(ISC_ENABLE, 0);
-		ecp_jtag_cmd8(ISC_ERASE, 0);
-		ecp_jtag_cmd8(LSC_RESET_CRC, 0);
-
-		read_status_register();
-
-		// ---------------------------------------------------------
-		// Program
-		// ---------------------------------------------------------
-
-		fprintf(stderr, "programming..\n");
-		ecp_jtag_cmd(LSC_BITSTREAM_BURST);
-		while (1) {
-			const uint32_t len = 16*1024;
-			static unsigned char buffer[16*1024];
-			int rc = fread(buffer, 1, len, f);
-			if (rc <= 0)
-				break;
-			if (verbose)
-				fprintf(stderr, "sending %d bytes.\n", rc);
-
-			for(int i = 0; i < rc; i++){
-				buffer[i] = bit_reverse(buffer[i]);
-			}
-
-			jtag_go_to_state(STATE_CAPTURE_DR);
-			jtag_tap_shift(buffer, buffer, rc*8, false);
+		if (user_mode)
+		{
+			user_set_io(writebyte);
 		}
-	
-		ecp_jtag_cmd(ISC_DISABLE);
-		read_status_register();	
 	}
 	else /* program flash */
 	{
 		// ---------------------------------------------------------
 		// Reset
 		// ---------------------------------------------------------
-
-		fprintf(stderr, "reset..\n");
-		/* Reset ECP5 to release SPI interface */
-		ecp_jtag_cmd8(ISC_ENABLE, 0);
-		ecp_jtag_cmd8(ISC_ERASE, 0);
-		ecp_jtag_cmd8(ISC_DISABLE, 0);
-
-		/* Put device into SPI bypass mode */
-		enter_spi_background_mode();
-
-		flash_reset();
-
-		flash_read_id();
-
+		ecp_init_flash_mode();
 
 		// ---------------------------------------------------------
 		// Program
@@ -1192,72 +1348,9 @@ int main(int argc, char **argv)
 
 		if (!read_mode && !check_mode)
 		{
-			if (disable_protect)
-			{
-				flash_write_enable();
-				flash_disable_protection();
-			}
-			
-			if (!dont_erase)
-			{
-				if (bulk_erase)
-				{
-					flash_write_enable();
-					flash_bulk_erase();
-					flash_wait();
-				}
-				else
-				{
-					fprintf(stderr, "file size: %ld\n", file_size);
-
-					int block_size = erase_block_size << 10;
-					int block_mask = block_size - 1;
-					int begin_addr = rw_offset & ~block_mask;
-					int end_addr = (rw_offset + file_size + block_mask) & ~block_mask;
-
-					for (int addr = begin_addr; addr < end_addr; addr += block_size) {
-						flash_write_enable();
-						switch(erase_block_size) {
-							case 4:
-								flash_4kB_sector_erase(addr);
-								break;
-							case 32:
-								flash_32kB_sector_erase(addr);
-								break;
-							case 64:
-								flash_64kB_sector_erase(addr);
-								break;
-						}
-						if (verbose) {
-							fprintf(stderr, "Status after block erase:\n");
-							flash_read_status();
-						}
-						flash_wait();
-					}
-				}
-			}
-
-			if (!erase_mode)
-			{
-				for (int rc, addr = 0; true; addr += rc) {
-					uint8_t buffer[256];
-
-					/* Show progress */
-					fprintf(stderr, "\r\033[0Kprogramming..  %04u/%04lu", addr, file_size);
-
-					int page_size = 256 - (rw_offset + addr) % 256;
-					rc = fread(buffer, 1, page_size, f);
-					if (rc <= 0)
-						break;
-					flash_write_enable();
-					flash_prog(rw_offset + addr, buffer, rc);
-					flash_wait();
-
-				}
-
-				fprintf(stderr, "\n");
-				/* seek to the beginning for second pass */
-				fseek(f, 0, SEEK_SET);
+			int ret = ecp_prog_flash(f, disable_protect, dont_erase, bulk_erase, erase_mode, erase_block_size, rw_offset);
+			if (ret) {
+				return ret;
 			}
 		}
 
@@ -1280,25 +1373,9 @@ int main(int argc, char **argv)
 			fprintf(stderr, "\n");
 		} else if (!erase_mode && !disable_verify) {
 			
-			flash_start_read(rw_offset);
-			for (int addr = 0; addr < file_size; addr += 4096) {
-				uint8_t buffer_flash[4096], buffer_file[4096];
-
-				int rc = fread(buffer_file, 1, 4096, f);
-				if (rc <= 0)
-					break;
-				
-				flash_continue_read(buffer_flash, rc);
-				
-				/* Show progress */
-				fprintf(stderr, "\r\033[0Kverify..       %04u/%04lu", addr + rc, file_size);
-				if (memcmp(buffer_file, buffer_flash, rc)) {
-					fprintf(stderr, "Found difference between flash and file!\n");
-					jtag_error(3);
-				}
-
+			if (ecp_flash_verify(f, rw_offset)) {
+				jtag_error(3);
 			}
-			fprintf(stderr, "  VERIFY OK\n");
 		}
 	}
 
