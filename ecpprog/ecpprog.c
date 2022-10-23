@@ -478,26 +478,6 @@ static void print_idcode(uint32_t idcode){
 	printf("IDCODE: 0x%08x does not match :(\n", idcode);
 }
 
-static void read_idcode(){
-
-	uint8_t data[4] = {READ_ID};
-
-	jtag_go_to_state(STATE_SHIFT_IR);
-	jtag_tap_shift(data, data, 8, true);
-
-	data[0] = 0;
-	jtag_go_to_state(STATE_SHIFT_DR);
-	jtag_tap_shift(data, data, 32, true);
-
-	uint32_t idcode = 0;
-	
-	/* Format the IDCODE into a 32bit value */
-	for(int i = 0; i< 4; i++)
-		idcode = data[i] << 24 | idcode >> 8;
-
-	print_idcode(idcode);
-}
-
 void print_ecp5_status_register(uint32_t status){	
 	printf("ECP5 Status Register: 0x%08x\n", status);
 
@@ -697,7 +677,6 @@ static void enter_spi_background_mode(){
 	jtag_go_to_state(STATE_RUN_TEST_IDLE);
 }
 
-
 void ecp_jtag_cmd(uint8_t cmd){
 	uint8_t data[1] = {cmd};
 
@@ -722,12 +701,37 @@ void ecp_jtag_cmd8(uint8_t cmd, uint8_t param){
 	jtag_wait_time(32);	
 }
 
+uint32_t read_idcode()
+{
+	jtag_go_to_state(STATE_TEST_LOGIC_RESET);
+	ecp_jtag_cmd(ISC_DISABLE);
+
+	uint8_t data[4] = {READ_ID};
+
+	jtag_go_to_state(STATE_SHIFT_IR);
+	jtag_tap_shift(data, data, 8, true);
+
+	data[0] = 0;
+	jtag_go_to_state(STATE_SHIFT_DR);
+	jtag_tap_shift(data, data, 32, true);
+
+	uint32_t idcode = 0;
+	
+	/* Format the IDCODE into a 32bit value */
+	for(int i = 0; i< 4; i++)
+		idcode = data[i] << 24 | idcode >> 8;
+
+	print_idcode(idcode);
+	return idcode;
+}
+
 void ecp_prog_sram(FILE *f, bool verbose)
 {
 	// ---------------------------------------------------------
 	// Reset
 	// ---------------------------------------------------------
 	fprintf(stderr, "reset..\n");
+	jtag_go_to_state(STATE_TEST_LOGIC_RESET);
 
 	ecp_jtag_cmd8(ISC_ENABLE, 0);
 	ecp_jtag_cmd8(ISC_ERASE, 0);

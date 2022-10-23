@@ -126,7 +126,7 @@ int user_read_console(char *data, int bytes)
 	rw_user_data(NULL, 0); // set USER2 as IR, and go do SHIFT_DR state
 	available = 0; // to make sure TDI = 0
 	jtag_tap_shift(&available, &available, 8, false);
-	//printf("Avail: %d\n", available);
+	printf("Avail: %d\n", available);
 	bytes--; // space for 0 char
 	if (available > bytes) {
 		available = (uint8_t)bytes;
@@ -135,7 +135,7 @@ int user_read_console(char *data, int bytes)
 		memset(data, 0, available);
 		data[available-1] = 0xF0; // no read on last 
 		jtag_tap_shift((uint8_t *)data, (uint8_t *)data, 8*available, true);
-		//dump_hex_relative(data, available);
+		dump_hex_relative(data, available);
 	}
 	data[available] = 0; // string terminating null
 	return (int)available;
@@ -230,6 +230,7 @@ uint32_t user_read_signals()
 
 int user_upload(const char *filename, const uint32_t dest_addr)
 {
+	printf("Uploading '%s' to address %08x\n", filename, dest_addr);
 	FILE *f = fopen(filename, "rb");
     if (!f) {
         printf("Cannot open file '%s'..\n", filename);
