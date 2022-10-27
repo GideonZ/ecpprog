@@ -7,6 +7,8 @@ enum lattice_ecp5_cmd
 	ISC_NOOP = 0xFF, /* 0 bits - Non-operation */
 	READ_ID = 0xE0, /* 24 bits - Read out the 32-bit IDCODE of the device */
 	USERCODE = 0xC0, /* 24 bits - Read 32-bit usercode */
+	LSC_TRACEID = 0x19, /* 24 bits - Read 64 bit Trace ID code. 8 bit user, 32 bit wafer lot number,
+							5 bit wafer #, 7 bit wafer X location, 7 bit wafer Y location, 5 bit spare */
 	LSC_READ_STATUS = 0x3C, /* 24 bits - Read out internal status */
 	LSC_CHECK_BUSY = 0xF0, /* 24 bits - Read 1 bit busy flag to check the command execution status */
 	LSC_REFRESH = 0x79, /* 24 bits - Equivalent to toggle PROGRAMN pin */

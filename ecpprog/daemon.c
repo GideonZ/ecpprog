@@ -26,6 +26,7 @@
 #define ECP_LOADFPGA 0x21 // (CONST CHAR *FILENAME, CONST UINT32_T DUMMY);
 #define ECP_PROGFLASH 0x22 // (CONST CHAR *FILENAME, CONST UINT32_T DEST_ADDR);
 #define ECP_READID 0x23 // void
+#define ECP_UNIQUE_ID 0x24 // void
 #define DAEMON_ID 0x41 // This is like an inquiry to see if the daemon is running.
 #define SYNC_BYTE 0xCC
 #define CODE_OKAY 0x00
@@ -34,6 +35,7 @@
 #define CODE_BAD_PARAMS 0xEC
 #define CODE_FILE_NOT_FOUND 0xEB
 #define CODE_VERIFY_ERROR 0xEA
+#define CODE_FIFO_ERROR 0xE9
 
 int start_daemon(int portnr)
 {
@@ -73,6 +75,7 @@ int start_daemon(int portnr)
     uint8_t buffer[BUF_SIZE];
     int nbytes;
     uint32_t *pul, addr;
+    uint64_t *p64;
     int *psi, len, total;
     uint8_t *mem;
 
@@ -127,11 +130,14 @@ int start_daemon(int portnr)
                             len = *psi;
                             if (len < 1024*1024) {
                                 mem = malloc(4*len);
-                                user_read_memory(*pul, len, mem);
+                                int fifo = user_read_memory(*pul, len, mem);
                                 buffer[0] = CODE_OKAY;
                                 send(clientfd, buffer, 2, 0);
                                 send(clientfd, mem, 4*len, 0);
                                 free(mem);
+                                if (fifo != 4*len) {
+                                    err = CODE_FIFO_ERROR;
+                                }
                             } else {
                                 err = CODE_BAD_PARAMS;
                             }
@@ -172,8 +178,13 @@ int start_daemon(int portnr)
                             addr = *pul;
                             len = *psi;
                             if (len < 256) {
-                                user_read_io_registers(addr, len, buffer+2);
-                                buffer[0] = CODE_OKAY;
+                                int got = user_read_io_registers(addr, len, buffer+2);
+                                if (got != len) {
+                                    buffer[0] = CODE_FIFO_ERROR;
+                                    err = CODE_FIFO_ERROR;
+                                } else {
+                                    buffer[0] = CODE_OKAY;
+                                }
                                 send(clientfd, buffer, 2 + len, 0);
                             } else {
                                 err = CODE_BAD_PARAMS;
@@ -268,6 +279,14 @@ int start_daemon(int portnr)
                         buffer[2] = 0; // padding
                         buffer[3] = 0; // padding
                         send(clientfd, buffer, 8, 0);
+                        break;
+                    case ECP_UNIQUE_ID:
+                        p64 = (uint64_t *)(buffer+4);
+                        *p64 = read_unique_id();
+                        buffer[0] = CODE_OKAY;
+                        buffer[2] = 0; // padding
+                        buffer[3] = 0; // padding
+                        send(clientfd, buffer, 12, 0);
                         break;
                     case ECP_LOADFPGA:
                     case ECP_PROGFLASH:

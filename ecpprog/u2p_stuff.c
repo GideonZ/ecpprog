@@ -141,8 +141,9 @@ int user_read_console(char *data, int bytes)
 	return (int)available;
 }
 
-void user_read_memory(uint32_t address, int words, uint8_t *dest)
+int user_read_memory(uint32_t address, int words, uint8_t *dest)
 {
+	int total = 0;
 	while(words > 0) {
 		int now = (words > 256) ? 256 : words;
 		uint32_t caddr = address;
@@ -154,13 +155,16 @@ void user_read_memory(uint32_t address, int words, uint8_t *dest)
 		read_cmd[8] = (uint8_t)(now - 1);
 		set_user_ir(5);
 		rw_user_data(read_cmd, 80);
-		if (!read_fifo(dest, 4*now))
+		int fifo = read_fifo(dest, 4*now);
+		if (!fifo)
 			break;
 		address += 4*now;
 		dest += 4*now;
 		words -= now;
+		total += fifo;
 	}
 	jtag_go_to_state(STATE_RUN_TEST_IDLE);
+	return total;
 }
 
 void user_write_memory(uint32_t address, int words, uint32_t *src)
@@ -177,7 +181,7 @@ void user_write_memory(uint32_t address, int words, uint32_t *src)
 	jtag_go_to_state(STATE_RUN_TEST_IDLE);
 }
 
-void user_read_io_registers(uint32_t address, int count, uint8_t *data)
+int user_read_io_registers(uint32_t address, int count, uint8_t *data)
 {
 	uint8_t read_cmd[] = { 0x00, 0x04, 0x00, 0x05, 0x00, 0x06, 0x00, 0x0D };
 	read_cmd[0] = (uint8_t)address;  address >>= 8;
@@ -191,7 +195,8 @@ void user_read_io_registers(uint32_t address, int count, uint8_t *data)
 	}
 	jtag_go_to_state(STATE_RUN_TEST_IDLE);
 	// Now read all the data from the fifo.
-	read_fifo(data, count);
+	memset(data, 0x55, count);
+	return read_fifo(data, count);
 }
 
 void user_write_io_registers(uint32_t address, int count, uint8_t *data)
@@ -238,8 +243,8 @@ int user_upload(const char *filename, const uint32_t dest_addr)
     }
 	fseek(f, 0, SEEK_END);
 	long int size = ftell(f);
-	size = (size + 3) & ~3;
-	uint8_t *filedata = malloc(size);
+	long int newsize = (size + 3) & ~3;
+	uint8_t *filedata = malloc(newsize);
 	if (!filedata) {
 		printf("Out of memory.\n");
 		return -2;
@@ -247,21 +252,14 @@ int user_upload(const char *filename, const uint32_t dest_addr)
 	fseek(f, 0, SEEK_SET);
 	int read_result = fread(filedata, 1, size, f);
 	fclose(f);
+	if (read_result != size) {
+		printf("Couldn't read the entire file.\n");
+		return -3;
+	}
 
-	user_write_memory(dest_addr, size >> 2, (uint32_t *)filedata);
+	user_write_memory(dest_addr, newsize >> 2, (uint32_t *)filedata);
 	free(filedata);
 
-/*
-	memset(filedata, 0x55, 4*words);
-	user_read_memory(0x00000, words, (uint8_t *)filedata);
-	for (int i=0;i<75;i++) {
-		printf("%2d: %08x\n", i, filedata[i]);
-	}
-	printf("Words = %d\n", words);
-	f = fopen("readback", "wb");
-	fwrite(filedata, 4, words, f);
-	fclose(f);
-*/
 	return 0;
 }
 

@@ -658,8 +658,6 @@ static void read_status_register(){
 	}
 }
 
-
-
 static void enter_spi_background_mode(){
 
 	uint8_t data[4] = {0x3A};
@@ -723,6 +721,32 @@ uint32_t read_idcode()
 
 	print_idcode(idcode);
 	return idcode;
+}
+
+uint64_t read_unique_id()
+{
+	jtag_go_to_state(STATE_TEST_LOGIC_RESET);
+
+	uint8_t data[8] = { LSC_TRACEID, 0, 0, 0, 0, 0, 0, 0 };
+
+	jtag_go_to_state(STATE_SHIFT_IR);
+	jtag_tap_shift(data, data, 8, true);
+
+	data[0] = 0;
+	jtag_go_to_state(STATE_SHIFT_DR);
+	jtag_tap_shift(data, data, 64, true);
+
+	uint64_t code = 0;
+	
+	/* Format the IDCODE into a 32bit value */
+	for(int i = 0; i < 8; i++)
+		code = (uint64_t)data[i] << 56 | code >> 8;
+
+	printf("Unique ID: %016lx\n", code);
+	printf("  Wafer Lot#: %08x\n", (uint32_t)(code >> 24));
+	printf("  Wafer #: %u\n", (uint32_t)((code >> 19) & 31));
+	printf("  Wafer X/Y: (%u, %u)\n", ((uint32_t)code >> 12) & 127, ((uint32_t)code >> 5) & 127);
+	return code;
 }
 
 void ecp_prog_sram(FILE *f, bool verbose)
@@ -1303,6 +1327,7 @@ int main(int argc, char **argv)
 	jtag_init(ifnum, devstr, clkdiv);
 
 	read_idcode();
+	read_unique_id();
 	read_status_register();
 
 	if (daemon_mode)
