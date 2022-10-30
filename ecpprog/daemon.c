@@ -23,10 +23,12 @@
 #define USER_READ_CONSOLE 7 // (CHAR *DATA, INT BYTES);
 #define USER_UPLOAD 8 // (CONST CHAR *FILENAME, CONST UINT32_T DEST_ADDR);
 #define USER_RUN_APPL 9 // (UINT32_T RUNADDR); 
+#define USER_READ_DEBUG 10 // void
 #define ECP_LOADFPGA 0x21 // (CONST CHAR *FILENAME, CONST UINT32_T DUMMY);
 #define ECP_PROGFLASH 0x22 // (CONST CHAR *FILENAME, CONST UINT32_T DEST_ADDR);
 #define ECP_READID 0x23 // void
 #define ECP_UNIQUE_ID 0x24 // void
+#define ECP_CLEARFPGA 0x25 // void
 #define DAEMON_ID 0x41 // This is like an inquiry to see if the daemon is running.
 #define SYNC_BYTE 0xCC
 #define CODE_OKAY 0x00
@@ -52,15 +54,23 @@ int start_daemon(int portnr)
 	sLocalAddr.sin_family = AF_INET;
 //	sLocalAddr.sin_len = sizeof(sLocalAddr);
 	sLocalAddr.sin_addr.s_addr = htonl(INADDR_ANY);
-	sLocalAddr.sin_port = htons(portnr);
 
-    printf("Bind to port number %d\n", portnr);
-    int bind_ret = bind(lSocket, (struct sockaddr *)&sLocalAddr, sizeof(sLocalAddr));
-	if (bind_ret < 0) {
-		close(lSocket);
-		puts("bind failed");
-		return bind_ret;
-	}
+    int bind_ret;
+    for(int i=0;i<20;i++) {
+        printf("Bind attempt to port number %d\n", portnr);
+        sLocalAddr.sin_port = htons(portnr);
+        bind_ret = bind(lSocket, (struct sockaddr *)&sLocalAddr, sizeof(sLocalAddr));
+        if (bind_ret == 0) {
+            break;
+        }
+        portnr++;
+    }
+
+    if (bind_ret < 0) {
+        close(lSocket);
+        puts("bind failed");
+        return bind_ret;
+    }
 
     int listen_ret = listen(lSocket, 20);
 	if ( listen_ret != 0 ) {
@@ -79,6 +89,7 @@ int start_daemon(int portnr)
     int *psi, len, total;
     uint8_t *mem;
 
+    printf("Listening to port %d\n", portnr);
 	while (1) {
 		clientfd = accept(lSocket, (struct sockaddr*)&client_addr, (socklen_t *)&addrlen);
 		if (clientfd > 0) {
@@ -88,13 +99,14 @@ int start_daemon(int portnr)
                 printf("Waiting for command... ");
                 fflush(stdout);
                 nbytes = recv(clientfd, buffer, 2, MSG_WAITALL);
-                printf("%02x %02x\n", buffer[0], buffer[1]);
 
                 if (nbytes < 2) {
                     printf("Client hung up.\n");
                     close(clientfd);
                     break;
                 }
+                printf("%02x %02x\n", buffer[0], buffer[1]);
+
                 if (buffer[0] != SYNC_BYTE) {
                     buffer[1] = buffer[0];
                     buffer[0] = CODE_BAD_SYNC;
@@ -119,6 +131,14 @@ int start_daemon(int portnr)
                         buffer[3] = 0; // padding
                         send(clientfd, buffer, 8, 0);
                         break;
+                    case USER_READ_DEBUG:
+                        pul = (uint32_t *)(buffer+4);
+                        *pul = user_read_debug();
+                        buffer[0] = CODE_OKAY;
+                        buffer[2] = 0; // padding
+                        buffer[3] = 0; // padding
+                        send(clientfd, buffer, 8, 0);
+                        break;
                     case USER_READ_MEMORY:
                         // (UINT32_T ADDRESS, INT WORDS, UINT8_T *DEST);
                         nbytes = recv(clientfd, buffer+4, 8, MSG_WAITALL);
@@ -131,13 +151,15 @@ int start_daemon(int portnr)
                             if (len < 1024*1024) {
                                 mem = malloc(4*len);
                                 int fifo = user_read_memory(*pul, len, mem);
-                                buffer[0] = CODE_OKAY;
-                                send(clientfd, buffer, 2, 0);
-                                send(clientfd, mem, 4*len, 0);
-                                free(mem);
                                 if (fifo != 4*len) {
                                     err = CODE_FIFO_ERROR;
+                                    buffer[0] = err;
+                                } else {
+                                    buffer[0] = CODE_OKAY;
                                 }
+                                send(clientfd, buffer, 2, 0);
+                                send(clientfd, mem, 4*len, 0); // Might be bogus
+                                free(mem);
                             } else {
                                 err = CODE_BAD_PARAMS;
                             }
@@ -287,6 +309,11 @@ int start_daemon(int portnr)
                         buffer[2] = 0; // padding
                         buffer[3] = 0; // padding
                         send(clientfd, buffer, 12, 0);
+                        break;
+                    case ECP_CLEARFPGA:
+                        ecp_init_flash_mode();
+                        buffer[0] = CODE_OKAY;
+                        send(clientfd, buffer, 2, 0);
                         break;
                     case ECP_LOADFPGA:
                     case ECP_PROGFLASH:

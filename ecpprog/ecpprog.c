@@ -882,7 +882,9 @@ int ecp_prog_flash(FILE *f, bool disable_protect, bool dont_erase, bool bulk_era
 void ecp_init_flash_mode()
 {
 	fprintf(stderr, "reset..\n");
-	/* Reset ECP5 to release SPI interface */
+	jtag_go_to_state(STATE_TEST_LOGIC_RESET);
+
+/* Reset ECP5 to release SPI interface */
 	ecp_jtag_cmd8(ISC_ENABLE, 0);
 	ecp_jtag_cmd8(ISC_ERASE, 0);
 	ecp_jtag_cmd8(ISC_DISABLE, 0);

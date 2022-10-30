@@ -270,13 +270,13 @@ void user_run_appl(uint32_t runaddr)
 	magic[1] = 0x1571babe;
 
 	// Set CPU to reset
-	user_set_io(0xB0);
+	user_set_io(0x80);
 
 	// write magic values
 	user_write_memory(0xF8, 2, magic);
 
 	// Un-reset CPU
-	user_set_io(0x30);
+	user_set_io(0x00);
 }
 
 void user_test_jtag()
@@ -328,3 +328,11 @@ void user_set_io(int value)
 	}
 }
 
+uint32_t user_read_debug()
+{
+	uint32_t code = 0;
+	set_user_ir(3);
+	rw_user_data((uint8_t*)&code, 32);
+	printf("Data read from Debug register: %08x\n", code);
+    return code;
+}

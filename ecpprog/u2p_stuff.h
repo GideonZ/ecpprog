@@ -11,5 +11,6 @@ void user_set_io(int value);
 int user_read_console(char *data, int bytes);
 int user_upload(const char *filename, const uint32_t dest_addr);
 void user_run_appl(uint32_t runaddr);
+uint32_t user_read_debug();
 
 #endif
