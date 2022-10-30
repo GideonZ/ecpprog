@@ -44,6 +44,7 @@
 
 #include "jtag.h"
 #include "lattice_cmds.h"
+#include "ecpprog.h"
 #include "u2p_stuff.h"
 #include "daemon.h"
 
@@ -790,7 +791,7 @@ void ecp_prog_sram(FILE *f, bool verbose)
 	read_status_register();	
 }
 
-int ecp_prog_flash(FILE *f, bool disable_protect, bool dont_erase, bool bulk_erase, bool erase_mode, int erase_block_size, int rw_offset)
+int ecp_prog_flash(FILE *f, bool disable_protect, bool dont_erase, bool bulk_erase, bool erase_mode, int erase_block_size, int rw_offset, callback_t cb)
 {
 	// This has been done before, but as a lib call,
 	// it is nicer when the file size does not need to be passed as an argument.
@@ -868,7 +869,9 @@ int ecp_prog_flash(FILE *f, bool disable_protect, bool dont_erase, bool bulk_era
 			flash_write_enable();
 			flash_prog(rw_offset + addr, buffer, rc);
 			flash_wait();
-
+			if (cb) {
+				cb();
+			}
 		}
 
 		fprintf(stderr, "\n");
@@ -1379,7 +1382,7 @@ int main(int argc, char **argv)
 
 		if (!read_mode && !check_mode)
 		{
-			int ret = ecp_prog_flash(f, disable_protect, dont_erase, bulk_erase, erase_mode, erase_block_size, rw_offset);
+			int ret = ecp_prog_flash(f, disable_protect, dont_erase, bulk_erase, erase_mode, erase_block_size, rw_offset, NULL);
 			if (ret) {
 				return ret;
 			}

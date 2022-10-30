@@ -38,6 +38,15 @@
 #define CODE_FILE_NOT_FOUND 0xEB
 #define CODE_VERIFY_ERROR 0xEA
 #define CODE_FIFO_ERROR 0xE9
+#define CODE_PROGRESS 0xBF
+
+int clientfd;
+
+void progress(void)
+{
+    uint8_t update[2] = { CODE_PROGRESS, ECP_PROGFLASH };
+    send(clientfd, update, 2, 0);    
+}
 
 int start_daemon(int portnr)
 {
@@ -79,7 +88,6 @@ int start_daemon(int portnr)
 		return listen_ret;
 	}
 
-    int clientfd;
     struct sockaddr_in client_addr;
     int addrlen=sizeof(client_addr);
     uint8_t buffer[BUF_SIZE];
@@ -344,7 +352,7 @@ int start_daemon(int portnr)
                                 ecp_prog_sram(f, false);
                             } else {
                                 ecp_init_flash_mode();
-                                ecp_prog_flash(f, true, false, false, false, 64, (int)addr);
+                                ecp_prog_flash(f, true, false, false, false, 64, (int)addr, &progress);
                                 if (ecp_flash_verify(f, (int)addr)) {
                                     buffer[0] = CODE_VERIFY_ERROR;
                                 }
