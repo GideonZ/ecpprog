@@ -41,11 +41,16 @@
 #define CODE_PROGRESS 0xBF
 
 int clientfd;
+unsigned int pagediv;
 
 void progress(void)
 {
-    uint8_t update[2] = { CODE_PROGRESS, ECP_PROGFLASH };
-    send(clientfd, update, 2, 0);    
+    pagediv ++;
+    if (pagediv >= 4) {
+        uint8_t update[2] = { CODE_PROGRESS, ECP_PROGFLASH };
+        send(clientfd, update, 2, 0);    
+        pagediv = 0;
+    }
 }
 
 int start_daemon(int portnr)
@@ -352,6 +357,7 @@ int start_daemon(int portnr)
                                 ecp_prog_sram(f, false);
                             } else {
                                 ecp_init_flash_mode();
+                                pagediv = 0;
                                 ecp_prog_flash(f, true, false, false, false, 64, (int)addr, &progress);
                                 if (ecp_flash_verify(f, (int)addr)) {
                                     buffer[0] = CODE_VERIFY_ERROR;
