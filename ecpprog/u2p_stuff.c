@@ -141,6 +141,28 @@ int user_read_console(char *data, int bytes)
 	return (int)available;
 }
 
+int user_read_console2(char *data, int bytes)
+{
+	uint8_t available = 0;
+	set_user_ir(11);
+	rw_user_data(NULL, 0); // set USER2 as IR, and go do SHIFT_DR state
+	available = 0; // to make sure TDI = 0
+	jtag_tap_shift(&available, &available, 8, false);
+	printf("Avail: %d\n", available);
+	bytes--; // space for 0 char
+	if (available > bytes) {
+		available = (uint8_t)bytes;
+	}
+	if (available) {
+		memset(data, 0, available);
+		data[available-1] = 0xF0; // no read on last 
+		jtag_tap_shift((uint8_t *)data, (uint8_t *)data, 8*available, true);
+		dump_hex_relative(data, available);
+	}
+	data[available] = 0; // string terminating null
+	return (int)available;
+}
+
 int user_read_memory(uint32_t address, int words, uint8_t *dest)
 {
 	int total = 0;

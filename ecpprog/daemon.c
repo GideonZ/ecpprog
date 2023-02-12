@@ -21,6 +21,7 @@
 #define USER_WRITE_IO_REGISTERS 5 // 5 (UINT32_T ADDRESS, INT COUNT, UINT8_T *DATA);
 #define USER_SET_IO 6 // (INT VALUE);
 #define USER_READ_CONSOLE 7 // (CHAR *DATA, INT BYTES);
+#define USER_READ_CONSOLE2 11 // (CHAR *DATA, INT BYTES);
 #define USER_UPLOAD 8 // (CONST CHAR *FILENAME, CONST UINT32_T DEST_ADDR);
 #define USER_RUN_APPL 9 // (UINT32_T RUNADDR); 
 #define USER_READ_DEBUG 10 // void
@@ -266,6 +267,21 @@ int start_daemon(int portnr)
                         total = 0;
                         do {
                             nbytes = user_read_console((char *)mem, len);
+                            total += nbytes;
+                            len -= nbytes;
+                            mem += nbytes;
+                        } while(nbytes);
+                        buffer[0] = CODE_OKAY;
+                        *((uint16_t*)(buffer + 2)) = (uint16_t)total;
+                        send(clientfd, buffer, total+4, 0);
+                        break;
+                    case USER_READ_CONSOLE2:
+                        // can read max BUF_SIZE-5, due to terminating null and four return bytes
+                        len = BUF_SIZE-5;
+                        mem  = buffer+4;
+                        total = 0;
+                        do {
+                            nbytes = user_read_console2((char *)mem, len);
                             total += nbytes;
                             len -= nbytes;
                             mem += nbytes;
